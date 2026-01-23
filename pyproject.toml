@@ -1,0 +1,38 @@
+[project]
+name = "meta-parquet-doc"
+version = "0.1.0"
+description = "Governance and documentation for Parquet datasets via _metadata.json"
+readme = "README.md"
+authors = [
+    { name = "mayasnova", email = "amayas.messara@gmail.com" }
+]
+requires-python = ">=3.14"
+dependencies = [
+    "pyarrow>=18.0.0",
+    "pandas>=2.2.0",
+]
+
+[project.optional-dependencies]
+spark = ["pyspark>=3.5.0"]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=6.0",
+    "ruff>=0.8.0",
+]
+
+[project.scripts]
+meta-parquet-doc = "meta_parquet_doc:main"
+
+[build-system]
+requires = ["uv_build>=0.9.3,<0.10.0"]
+build-backend = "uv_build"
+
+[tool.ruff]
+target-version = "py314"
+line-length = 100
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "spark: marks tests requiring PySpark (deselect with '-m \"not spark\"')",
+]
