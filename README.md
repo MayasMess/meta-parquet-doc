@@ -1,12 +1,155 @@
 # meta-parquet-doc
 
-Gouvernance et documentation de datasets Parquet via un fichier `_metadata.json` stocké à côté des données.
+Governance and documentation for Parquet datasets via a `_metadata.json` file stored alongside the data.
 
-`meta-parquet-doc` permet de :
-- Documenter chaque colonne d'un dataset (description, nullable, PII)
-- Valider automatiquement que la documentation est complète
-- Lire et écrire des datasets Parquet avec **Pandas**, **PyArrow** ou **PySpark**
-- Versionner la documentation en Git (JSON lisible, déterministe)
+`meta-parquet-doc` enables you to:
+- Document each column of a dataset (description, nullable, PII)
+- Automatically validate that documentation is complete
+- Read and write Parquet datasets with **Pandas**, **PyArrow**, or **PySpark**
+- Version documentation in Git (readable, deterministic JSON)
+
+## Getting started: minimal code change
+
+### Drop-in replacement for native Parquet writing
+
+You can start using `meta-parquet-doc` with **minimal code changes** — metadata is optional:
+
+**Pandas** - Before:
+```python
+df.to_parquet("./data/users.parquet")
+```
+
+**Pandas** - After:
+```python
+from meta_parquet_doc import write_dataset
+
+write_dataset(df, path="./data/users.parquet")
+# Works immediately, logs warnings about missing documentation
+```
+
+**PyArrow** - Before:
+```python
+import pyarrow.parquet as pq
+pq.write_table(table, "./data/users.parquet")
+```
+
+**PyArrow** - After:
+```python
+from meta_parquet_doc import write_dataset
+
+write_dataset(table, path="./data/users.parquet")
+# Auto-detects PyArrow, logs warnings about missing documentation
+```
+
+**PySpark** - Before:
+```python
+df.write.parquet("./data/users.parquet")
+```
+
+**PySpark** - After:
+```python
+from meta_parquet_doc import write_dataset
+
+write_dataset(df, path="./data/users.parquet")
+# Auto-detects PySpark, logs warnings about missing documentation
+```
+
+### Progressive documentation
+
+Start without metadata, then add it progressively:
+
+```python
+from meta_parquet_doc import write_dataset
+
+# Step 1: Just replace the write function (logs warnings)
+write_dataset(df, path="./data/users.parquet")
+
+# Step 2: Document some columns
+write_dataset(
+    df,
+    path="./data/users.parquet",
+    columns_metadata={
+        "user_id": {"description": "ID", "nullable": False, "pii": False},
+        # Other columns: warnings logged
+    },
+)
+
+# Step 3: Full documentation + validation
+write_dataset(
+    df,
+    path="./data/users.parquet",
+    dataset_metadata={"description": "Users table.", "owner": "data-team"},
+    columns_metadata={
+        "user_id": {"description": "Unique ID", "nullable": False, "pii": False},
+        "email": {"description": "Email", "nullable": True, "pii": True},
+    },
+    mode="strict",  # Now enforces complete documentation
+)
+```
+
+By default (`mode="warn"`), missing metadata logs warnings but doesn't block writes. Use `mode="strict"` to enforce complete documentation.
+
+## Why add metadata?
+
+### Without metadata (native Parquet)
+
+```python
+import pyarrow.parquet as pq
+import pyarrow as pa
+
+table = pa.table({
+    "user_id": [1, 2, 3],
+    "email": ["a@x.com", "b@x.com", None],
+})
+
+pq.write_table(table, "./data/users.parquet")
+
+# ❌ No column documentation
+# ❌ No PII data traceability
+# ❌ No completeness validation
+# ❌ No governance
+```
+
+### With full metadata (meta-parquet-doc)
+
+```python
+from meta_parquet_doc import write_dataset
+import pandas as pd
+
+df = pd.DataFrame({
+    "user_id": [1, 2, 3],
+    "email": ["a@x.com", "b@x.com", None],
+})
+
+write_dataset(
+    df,
+    path="./data/users.parquet",
+    dataset_metadata={
+        "description": "Users table.",
+        "owner": "data-team",
+    },
+    columns_metadata={
+        "user_id": {
+            "description": "Unique identifier.",
+            "nullable": False,
+            "pii": False,
+        },
+        "email": {
+            "description": "Email address.",
+            "nullable": True,
+            "pii": True,
+            "pii_category": "contact_info",
+        },
+    },
+    mode="strict",
+)
+
+# ✓ Produces users.parquet + _metadata.json
+# ✓ Documentation versioned in Git
+# ✓ Automatic validation of mandatory fields
+# ✓ PII column identification
+# ✓ Data governance built-in
+```
 
 ## Installation
 
@@ -14,15 +157,15 @@ Gouvernance et documentation de datasets Parquet via un fichier `_metadata.json`
 pip install meta-parquet-doc
 ```
 
-Avec support PySpark :
+With PySpark support:
 
 ```bash
 pip install meta-parquet-doc[spark]
 ```
 
-## Utilisation rapide
+## Quick usage
 
-### Écrire un dataset documenté
+### Write a documented dataset
 
 ```python
 import pandas as pd
@@ -37,17 +180,17 @@ write_dataset(
     df,
     path="./data/users.parquet",
     dataset_metadata={
-        "description": "Table des utilisateurs.",
+        "description": "Users table.",
         "owner": "data-team",
     },
     columns_metadata={
         "user_id": {
-            "description": "Identifiant unique.",
+            "description": "Unique identifier.",
             "nullable": False,
             "pii": False,
         },
         "email": {
-            "description": "Adresse email.",
+            "description": "Email address.",
             "nullable": True,
             "pii": True,
             "pii_category": "contact_info",
@@ -57,50 +200,50 @@ write_dataset(
 )
 ```
 
-Cela produit deux fichiers :
-- `./data/users.parquet` — les données
-- `./data/_metadata.json` — la documentation
+This produces two files:
+- `./data/users.parquet` — the data
+- `./data/_metadata.json` — the documentation
 
-### Lire un dataset avec ses métadonnées
+### Read a dataset with its metadata
 
 ```python
 from meta_parquet_doc import read_dataset
 
 df, metadata = read_dataset("./data/users.parquet", engine="pandas")
 
-print(metadata.dataset.description)  # "Table des utilisateurs."
+print(metadata.dataset.description)  # "Users table."
 print(metadata.columns["email"].pii)  # True
 ```
 
-### Valider un dataset existant
+### Validate an existing dataset
 
 ```python
 from meta_parquet_doc import validate_dataset
 
 result = validate_dataset("./data/users.parquet")
 if result.is_valid:
-    print("Documentation complète.")
+    print("Documentation complete.")
 else:
     print(result.errors)
 ```
 
-### Générer un squelette de documentation
+### Generate a documentation skeleton
 
-Pour un dataset Parquet existant sans `_metadata.json` :
+For an existing Parquet dataset without `_metadata.json`:
 
 ```python
 from meta_parquet_doc import init_metadata
 
 init_metadata(
     "./data/users.parquet",
-    dataset_description="Table des utilisateurs.",
+    dataset_description="Users table.",
     owner="data-team",
 )
 ```
 
-Cela crée un `_metadata.json` pré-rempli avec les noms de colonnes, qu'il suffit ensuite de compléter.
+This creates a pre-filled `_metadata.json` with column names, which you can then complete.
 
-## Avec PyArrow (datasets partitionnés)
+## With PyArrow (partitioned datasets)
 
 ```python
 import pyarrow as pa
@@ -114,18 +257,18 @@ table = pa.table({
 write_dataset(
     table,
     path="./data/scores",
-    dataset_metadata={"description": "Scores par région."},
+    dataset_metadata={"description": "Scores by region."},
     columns_metadata={
-        "region": {"description": "Région.", "nullable": False, "pii": False},
+        "region": {"description": "Region.", "nullable": False, "pii": False},
         "score": {"description": "Score.", "nullable": False, "pii": False},
     },
-    partition_cols=["region"],  # passé directement à PyArrow
+    partition_cols=["region"],  # passed directly to PyArrow
 )
 
 table, meta = read_dataset("./data/scores", engine="pyarrow")
 ```
 
-## Avec PySpark
+## With PySpark
 
 ```python
 from pyspark.sql import SparkSession
@@ -137,10 +280,10 @@ df = spark.createDataFrame([(1, "Alice"), (2, "Bob")], ["id", "name"])
 write_dataset(
     df,
     path="./data/people.parquet",
-    dataset_metadata={"description": "Personnes."},
+    dataset_metadata={"description": "People."},
     columns_metadata={
         "id": {"description": "ID.", "nullable": False, "pii": False},
-        "name": {"description": "Nom.", "nullable": False, "pii": True},
+        "name": {"description": "Name.", "nullable": False, "pii": True},
     },
 )
 
@@ -151,69 +294,69 @@ df_loaded, meta = read_dataset(
 )
 ```
 
-## Format du fichier `_metadata.json`
+## `_metadata.json` file format
 
 ```json
 {
   "$schema": "meta-parquet-doc/v1",
   "columns": {
     "user_id": {
-      "description": "Identifiant unique.",
+      "description": "Unique identifier.",
       "nullable": false,
       "pii": false
     },
     "email": {
-      "description": "Adresse email.",
+      "description": "Email address.",
       "nullable": true,
       "pii": true,
       "pii_category": "contact_info"
     }
   },
   "dataset": {
-    "description": "Table des utilisateurs.",
+    "description": "Users table.",
     "owner": "data-team",
     "tags": ["users"]
   }
 }
 ```
 
-### Champs par colonne
+### Per-column fields
 
-| Champ | Obligatoire | Type | Description |
+| Field | Required | Type | Description |
 |-------|:-----------:|------|-------------|
-| `description` | oui | str | Description de la colonne |
-| `nullable` | oui | bool | La colonne peut-elle contenir des null ? |
-| `pii` | oui | bool | Donnée personnelle identifiable ? |
-| `pii_category` | non | str | Catégorie PII (ex: `direct_identifier`, `contact_info`) |
+| `description` | yes | str | Column description |
+| `nullable` | yes | bool | Can the column contain null values? |
+| `pii` | yes | bool | Personally identifiable information? |
+| `pii_category` | no | str | PII category (e.g. `direct_identifier`, `contact_info`) |
 
-### Champs du dataset
+### Dataset fields
 
-| Champ | Obligatoire | Type | Description |
+| Field | Required | Type | Description |
 |-------|:-----------:|------|-------------|
-| `description` | oui | str | Description du dataset |
-| `owner` | non | str | Équipe ou personne responsable |
-| `tags` | non | list[str] | Tags libres pour catégoriser |
+| `description` | yes | str | Dataset description |
+| `owner` | no | str | Responsible team or person |
+| `tags` | no | list[str] | Free-form tags for categorization |
 
-## Modes de validation
+## Validation modes
 
-| Mode | Comportement |
+| Mode | Behavior |
 |------|-------------|
-| `"warn"` (défaut) | Affiche des warnings Python, l'opération continue |
-| `"strict"` | Lève `MetadataValidationError` dès qu'un problème est détecté |
+| `"warn"` (default) | Logs Python warnings, operation continues |
+| `"strict"` | Raises `MetadataValidationError` when a problem is detected |
 
-Les validations effectuées :
-- Chaque colonne du dataset est documentée dans `_metadata.json`
-- Les champs obligatoires (`description`, `nullable`, `pii`) sont présents et du bon type
-- Détection des entrées obsolètes (colonnes documentées mais absentes des données)
+Validations performed:
+- Each dataset column is documented in `_metadata.json`
+- Mandatory fields (`description`, `nullable`, `pii`) are present and of the correct type
+- Detection of obsolete entries (documented columns absent from the data)
 
-## API complète
+## Complete API
 
 ```python
 from meta_parquet_doc import (
-    write_dataset,         # Écrire données + métadonnées
-    read_dataset,          # Lire données + métadonnées
-    validate_dataset,      # Valider sans charger les données
-    init_metadata,         # Générer un squelette _metadata.json
+    write_dataset,         # Write data + metadata
+    read_dataset,          # Read data + metadata
+    validate_dataset,      # Validate without loading data
+    init_metadata,         # Generate _metadata.json skeleton
 
     # Types
     ColumnMetadata,
@@ -228,12 +371,12 @@ from meta_parquet_doc import (
 )
 ```
 
-## Contribuer
+## Contributing
 
-### Prérequis
+### Prerequisites
 
 - Python >= 3.14
-- [uv](https://docs.astral.sh/uv/) pour la gestion des dépendances
+- [uv](https://docs.astral.sh/uv/) for dependency management
 
 ### Setup
 
@@ -243,13 +386,13 @@ cd meta-parquet-doc
 uv sync --extra dev
 ```
 
-### Lancer les tests
+### Run tests
 
 ```bash
 uv run pytest tests/ -v
 ```
 
-Pour un test spécifique :
+For a specific test:
 
 ```bash
 uv run pytest tests/test_api.py::TestWriteDataset::test_write_pandas_with_metadata -v
@@ -262,24 +405,24 @@ uv run ruff check src/ tests/
 uv run ruff check --fix src/ tests/   # auto-fix
 ```
 
-### Structure du projet
+### Project structure
 
 ```
 src/meta_parquet_doc/
-├── api.py              # Fonctions publiques (write/read/validate/init)
-├── _types.py           # Dataclasses de métadonnées
-├── _validation.py      # Logique de validation (coverage + champs obligatoires)
-├── _metadata_io.py     # Lecture/écriture du fichier JSON
-├── _schema.py          # Validation structurelle du JSON brut
-├── _adapters/          # Adaptateurs par moteur (Pandas, PyArrow, PySpark)
-└── exceptions.py       # Hiérarchie d'exceptions
-tests/                  # Tests pytest
-examples/               # Exemples d'utilisation
+├── api.py              # Public functions (write/read/validate/init)
+├── _types.py           # Metadata dataclasses
+├── _validation.py      # Validation logic (coverage + mandatory fields)
+├── _metadata_io.py     # JSON file read/write
+├── _schema.py          # Structural validation of raw JSON
+├── _adapters/          # Engine-specific adapters (Pandas, PyArrow, PySpark)
+└── exceptions.py       # Exception hierarchy
+tests/                  # pytest tests
+examples/               # Usage examples
 ```
 
 ### Conventions
 
-- Le code suit les règles [ruff](https://docs.astral.sh/ruff/) (ligne max 100 caractères)
-- Les tests utilisent `pytest` avec des fixtures partagées dans `conftest.py`
-- Le fichier `_metadata.json` est toujours écrit avec des clés triées et un indent de 2 espaces pour des diffs Git stables
-- PySpark est une dépendance optionnelle : les tests Spark sont marqués `@pytest.mark.spark`
+- Code follows [ruff](https://docs.astral.sh/ruff/) rules (max 100 char line length)
+- Tests use `pytest` with shared fixtures in `conftest.py`
+- `_metadata.json` is always written with sorted keys and 2-space indent for stable Git diffs
+- PySpark is an optional dependency: Spark tests are marked with `@pytest.mark.spark`
