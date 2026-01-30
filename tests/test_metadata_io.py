@@ -23,17 +23,33 @@ class TestResolveMetadataPath:
         result = resolve_metadata_path("/some/data.parquet", absolute)
         assert result == absolute
 
-    def test_relative_to_file(self, tmp_path):
+    def test_default_for_file(self, tmp_path):
+        """File -> <filename>.meta.json next to the file."""
         data_file = tmp_path / "data.parquet"
         data_file.touch()
-        result = resolve_metadata_path(data_file, "_metadata.json")
-        assert result == tmp_path / "_metadata.json"
+        result = resolve_metadata_path(data_file)
+        assert result == tmp_path / "data.parquet.meta.json"
 
-    def test_relative_to_directory(self, tmp_path):
+    def test_default_for_directory(self, tmp_path):
+        """Directory -> <dirname>.meta.json next to the directory."""
         data_dir = tmp_path / "dataset"
         data_dir.mkdir()
-        result = resolve_metadata_path(data_dir, "_metadata.json")
-        assert result == data_dir / "_metadata.json"
+        result = resolve_metadata_path(data_dir)
+        assert result == tmp_path / "dataset.meta.json"
+
+    def test_explicit_relative_path_for_file(self, tmp_path):
+        """Explicit metadata_path is resolved relative to file's parent."""
+        data_file = tmp_path / "data.parquet"
+        data_file.touch()
+        result = resolve_metadata_path(data_file, "custom.json")
+        assert result == tmp_path / "custom.json"
+
+    def test_explicit_relative_path_for_directory(self, tmp_path):
+        """Explicit metadata_path is resolved relative to directory's parent."""
+        data_dir = tmp_path / "dataset"
+        data_dir.mkdir()
+        result = resolve_metadata_path(data_dir, "custom.json")
+        assert result == tmp_path / "custom.json"
 
 
 class TestReadWriteMetadataFile:

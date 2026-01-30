@@ -1,6 +1,6 @@
 # meta-parquet-doc
 
-Governance and documentation for Parquet datasets via a `_metadata.json` file stored alongside the data.
+Governance and documentation for Parquet datasets via a `.meta.json` file stored alongside the data.
 
 `meta-parquet-doc` enables you to:
 - Document each column of a dataset (description, nullable, PII)
@@ -144,7 +144,7 @@ write_dataset(
     mode="strict",
 )
 
-# ✓ Produces users.parquet + _metadata.json
+# ✓ Produces users.parquet + users.parquet.meta.json
 # ✓ Documentation versioned in Git
 # ✓ Automatic validation of mandatory fields
 # ✓ PII column identification
@@ -202,7 +202,7 @@ write_dataset(
 
 This produces two files:
 - `./data/users.parquet` — the data
-- `./data/_metadata.json` — the documentation
+- `./data/users.parquet.meta.json` — the documentation
 
 ### Read a dataset with its metadata
 
@@ -229,7 +229,7 @@ else:
 
 ### Generate a documentation skeleton
 
-For an existing Parquet dataset without `_metadata.json`:
+For an existing Parquet dataset without metadata:
 
 ```python
 from meta_parquet_doc import init_metadata
@@ -241,7 +241,7 @@ init_metadata(
 )
 ```
 
-This creates a pre-filled `_metadata.json` with column names, which you can then complete.
+This creates a pre-filled `users.parquet.meta.json` with column names, which you can then complete.
 
 ## With PyArrow (partitioned datasets)
 
@@ -264,6 +264,7 @@ write_dataset(
     },
     partition_cols=["region"],  # passed directly to PyArrow
 )
+# Produces: ./data/scores/ (partitioned) + ./data/scores.meta.json
 
 table, meta = read_dataset("./data/scores", engine="pyarrow")
 ```
@@ -286,6 +287,7 @@ write_dataset(
         "name": {"description": "Name.", "nullable": False, "pii": True},
     },
 )
+# Produces: ./data/people.parquet + ./data/people.parquet.meta.json
 
 df_loaded, meta = read_dataset(
     "./data/people.parquet",
@@ -294,7 +296,7 @@ df_loaded, meta = read_dataset(
 )
 ```
 
-## `_metadata.json` file format
+## `.meta.json` file format
 
 ```json
 {
@@ -345,7 +347,7 @@ df_loaded, meta = read_dataset(
 | `"strict"` | Raises `MetadataValidationError` when a problem is detected |
 
 Validations performed:
-- Each dataset column is documented in `_metadata.json`
+- Each dataset column is documented in the `.meta.json` file
 - Mandatory fields (`description`, `nullable`, `pii`) are present and of the correct type
 - Detection of obsolete entries (documented columns absent from the data)
 
@@ -356,7 +358,7 @@ from meta_parquet_doc import (
     write_dataset,         # Write data + metadata
     read_dataset,          # Read data + metadata
     validate_dataset,      # Validate without loading data
-    init_metadata,         # Generate _metadata.json skeleton
+    init_metadata,         # Generate .meta.json skeleton
 
     # Types
     ColumnMetadata,
@@ -424,5 +426,5 @@ examples/               # Usage examples
 
 - Code follows [ruff](https://docs.astral.sh/ruff/) rules (max 100 char line length)
 - Tests use `pytest` with shared fixtures in `conftest.py`
-- `_metadata.json` is always written with sorted keys and 2-space indent for stable Git diffs
+- `.meta.json` files are always written with sorted keys and 2-space indent for stable Git diffs
 - PySpark is an optional dependency: Spark tests are marked with `@pytest.mark.spark`
