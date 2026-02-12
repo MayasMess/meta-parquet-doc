@@ -89,6 +89,35 @@ write_dataset(
 
 By default (`mode="warn"`), missing metadata logs warnings but doesn't block writes. Use `mode="strict"` to enforce complete documentation.
 
+### Inheriting column documentation across datasets
+
+When joining or transforming datasets, use `columns_from` to automatically inherit column documentation from existing sources. Only columns present in the new DataFrame are kept — you only need to document truly new columns:
+
+```python
+from meta_parquet_doc import read_dataset, write_dataset
+
+# Read two documented datasets
+df_users, meta_users = read_dataset("./data/users.parquet")
+df_orders, meta_orders = read_dataset("./data/orders.parquet")
+
+# Join them
+df_joined = df_users.merge(df_orders, on="user_id")
+
+# Write the result: column docs are inherited, only new columns need documentation
+write_dataset(
+    df_joined,
+    path="./data/user_orders.parquet",
+    dataset_metadata={"description": "Users with their orders.", "owner": "analytics"},
+    columns_from=meta_users | meta_orders,  # merge column docs from both sources
+    columns_metadata={
+        # Only document new columns (if any)
+        "order_total": {"description": "Computed total.", "nullable": False, "pii": False},
+    },
+)
+```
+
+The `|` operator merges column metadata from multiple sources (right side wins on conflicts). `columns_from` filters to keep only columns that exist in the DataFrame, then `columns_metadata` can override or add entries on top.
+
 ## Why add metadata?
 
 ### Without metadata (native Parquet)

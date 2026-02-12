@@ -35,6 +35,7 @@ def write_dataset(
     metadata_path: str | Path = "_metadata.json",
     dataset_metadata: dict[str, Any] | None = None,
     columns_metadata: dict[str, dict[str, Any]] | None = None,
+    columns_from: ParquetDocMetadata | None = None,
     mode: Literal["warn", "strict"] = "warn",
     **parquet_kwargs: Any,
 ) -> Path:
@@ -53,6 +54,11 @@ def write_dataset(
         Keys: description (required), owner, tags.
     columns_metadata : dict, optional
         Mapping of column_name -> {description, nullable, pii, pii_category}.
+    columns_from : ParquetDocMetadata, optional
+        Inherit column documentation from existing metadata. Only columns
+        present in the DataFrame are kept. Can be combined with
+        columns_metadata (which takes priority for overrides).
+        Supports merging multiple sources via ``meta_a | meta_b``.
     mode : "warn" | "strict"
         Validation mode. "strict" raises on issues, "warn" emits warnings.
     **parquet_kwargs
@@ -66,18 +72,30 @@ def write_dataset(
     path = Path(path)
     adapter = detect_adapter(df)
     actual_columns = adapter.get_column_names(df)
+    actual_set = set(actual_columns)
 
-    # Build or load metadata
-    if columns_metadata is not None:
-        # Validate the provided metadata
-        validate_mandatory_fields(columns_metadata, mode=mode)
-        validate_columns_coverage(actual_columns, columns_metadata, mode=mode)
+    # Build columns metadata by layering sources
+    columns: dict[str, ColumnMetadata] = {}
+
+    # Layer 1: inherit from existing metadata (filtered to actual columns)
+    if columns_from is not None:
         columns = {
-            name: ColumnMetadata.from_dict(col_data)
-            for name, col_data in columns_metadata.items()
+            name: col for name, col in columns_from.columns.items()
+            if name in actual_set
         }
+
+    # Layer 2: columns_metadata overrides / adds new columns
+    if columns_metadata is not None:
+        validate_mandatory_fields(columns_metadata, mode=mode)
+        for name, col_data in columns_metadata.items():
+            columns[name] = ColumnMetadata.from_dict(col_data)
+
+    # Layer 3: fallback for remaining undocumented columns
+    if columns:
+        columns_dict = {k: v.to_dict() for k, v in columns.items()}
+        validate_columns_coverage(actual_columns, columns_dict, mode=mode)
     else:
-        # Try reading existing metadata
+        # No columns_from and no columns_metadata: try existing file or skeleton
         resolved = resolve_metadata_path(path, metadata_path)
         if resolved.exists():
             raw = read_metadata_file(resolved)
@@ -87,7 +105,6 @@ def write_dataset(
                 actual_columns, {k: v.to_dict() for k, v in columns.items()}, mode=mode
             )
         else:
-            # No metadata provided and no file exists: create skeleton
             columns = {
                 col: ColumnMetadata(description="", nullable=True, pii=False)
                 for col in actual_columns

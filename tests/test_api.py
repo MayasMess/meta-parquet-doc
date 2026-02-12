@@ -6,7 +6,12 @@ import warnings
 import pyarrow as pa
 import pytest
 
+import pandas as pd
+
 from meta_parquet_doc import (
+    ColumnMetadata,
+    DatasetMetadata,
+    ParquetDocMetadata,
     init_metadata,
     read_dataset,
     validate_dataset,
@@ -148,6 +153,135 @@ class TestValidateDataset:
         # Actually skeleton has valid types but empty strings, which is valid structurally.
         result = validate_dataset(out, mode="warn")
         assert result.is_valid
+
+
+class TestColumnsFrom:
+    def test_columns_from_filters_to_actual_columns(self, tmp_path):
+        """columns_from only keeps columns present in the DataFrame."""
+        source_meta = ParquetDocMetadata(
+            dataset=DatasetMetadata(description="source"),
+            columns={
+                "user_id": ColumnMetadata(description="User ID", nullable=False, pii=False),
+                "name": ColumnMetadata(description="Full name", nullable=False, pii=True),
+                "extra_col": ColumnMetadata(description="Not in target", nullable=True, pii=False),
+            },
+        )
+        df = pd.DataFrame({"user_id": [1], "name": ["Alice"]})
+        out = tmp_path / "data.parquet"
+        meta_path = write_dataset(
+            df, out,
+            dataset_metadata={"description": "Target"},
+            columns_from=source_meta,
+            mode="strict",
+        )
+        raw = json.loads(meta_path.read_text())
+        assert set(raw["columns"].keys()) == {"user_id", "name"}
+        assert raw["columns"]["user_id"]["description"] == "User ID"
+        assert "extra_col" not in raw["columns"]
+
+    def test_columns_from_with_columns_metadata_override(self, tmp_path):
+        """columns_metadata overrides entries from columns_from."""
+        source_meta = ParquetDocMetadata(
+            dataset=DatasetMetadata(description="source"),
+            columns={
+                "user_id": ColumnMetadata(description="Old desc", nullable=False, pii=False),
+                "name": ColumnMetadata(description="Full name", nullable=False, pii=True),
+            },
+        )
+        df = pd.DataFrame({"user_id": [1], "name": ["Alice"], "new_col": [42]})
+        out = tmp_path / "data.parquet"
+        meta_path = write_dataset(
+            df, out,
+            dataset_metadata={"description": "Target"},
+            columns_from=source_meta,
+            columns_metadata={
+                "user_id": {"description": "Overridden", "nullable": False, "pii": False},
+                "new_col": {"description": "Brand new", "nullable": False, "pii": False},
+            },
+            mode="strict",
+        )
+        raw = json.loads(meta_path.read_text())
+        assert raw["columns"]["user_id"]["description"] == "Overridden"
+        assert raw["columns"]["name"]["description"] == "Full name"
+        assert raw["columns"]["new_col"]["description"] == "Brand new"
+
+    def test_columns_from_merged_sources(self, tmp_path):
+        """columns_from accepts merged metadata via | operator."""
+        meta_users = ParquetDocMetadata(
+            dataset=DatasetMetadata(description="Users"),
+            columns={
+                "user_id": ColumnMetadata(description="User ID", nullable=False, pii=False),
+                "name": ColumnMetadata(description="Full name", nullable=False, pii=True),
+            },
+        )
+        meta_orders = ParquetDocMetadata(
+            dataset=DatasetMetadata(description="Orders"),
+            columns={
+                "user_id": ColumnMetadata(description="User ID", nullable=False, pii=False),
+                "amount": ColumnMetadata(description="Order amount", nullable=False, pii=False),
+            },
+        )
+        df = pd.DataFrame({"user_id": [1], "name": ["Alice"], "amount": [10.0]})
+        out = tmp_path / "data.parquet"
+        meta_path = write_dataset(
+            df, out,
+            dataset_metadata={"description": "Joined", "owner": "analytics"},
+            columns_from=meta_users | meta_orders,
+            mode="strict",
+        )
+        raw = json.loads(meta_path.read_text())
+        assert set(raw["columns"].keys()) == {"user_id", "name", "amount"}
+        assert raw["dataset"]["description"] == "Joined"
+        assert raw["dataset"]["owner"] == "analytics"
+
+    def test_end_to_end_read_merge_write(self, tmp_path):
+        """Full workflow: read two datasets, merge metadata, write joined."""
+        df_users = pd.DataFrame({"user_id": [1, 2], "name": ["A", "B"]})
+        df_orders = pd.DataFrame({"user_id": [1, 2], "amount": [10.0, 20.0]})
+
+        users_dir = tmp_path / "users"
+        users_dir.mkdir()
+        orders_dir = tmp_path / "orders"
+        orders_dir.mkdir()
+        joined_dir = tmp_path / "joined"
+        joined_dir.mkdir()
+
+        write_dataset(
+            df_users, users_dir / "data.parquet",
+            dataset_metadata={"description": "Users"},
+            columns_metadata={
+                "user_id": {"description": "User ID", "nullable": False, "pii": False},
+                "name": {"description": "Full name", "nullable": False, "pii": True},
+            },
+        )
+        write_dataset(
+            df_orders, orders_dir / "data.parquet",
+            dataset_metadata={"description": "Orders"},
+            columns_metadata={
+                "user_id": {"description": "User ID", "nullable": False, "pii": False},
+                "amount": {"description": "Order amount", "nullable": False, "pii": False},
+            },
+        )
+
+        _, meta_users = read_dataset(users_dir / "data.parquet")
+        _, meta_orders = read_dataset(orders_dir / "data.parquet")
+
+        df_joined = df_users.merge(df_orders, on="user_id")
+
+        write_dataset(
+            df_joined, joined_dir / "data.parquet",
+            dataset_metadata={"description": "Users with orders", "owner": "analytics"},
+            columns_from=meta_users | meta_orders,
+            mode="strict",
+        )
+
+        df_result, meta_result = read_dataset(joined_dir / "data.parquet")
+        assert set(meta_result.columns.keys()) == {"user_id", "name", "amount"}
+        assert meta_result.dataset.description == "Users with orders"
+        assert meta_result.dataset.owner == "analytics"
+        assert meta_result.columns["user_id"].description == "User ID"
+        assert meta_result.columns["name"].pii is True
+        assert meta_result.columns["amount"].description == "Order amount"
 
 
 class TestInitMetadata:

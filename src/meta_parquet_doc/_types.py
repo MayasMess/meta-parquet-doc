@@ -88,3 +88,12 @@ class ParquetDocMetadata:
                 for name, col_data in data.get("columns", {}).items()
             },
         )
+
+    def __or__(self, other: "ParquetDocMetadata") -> "ParquetDocMetadata":
+        """Merge column metadata from two sources. Right side wins on conflicts."""
+        if not isinstance(other, ParquetDocMetadata):
+            return NotImplemented
+        return ParquetDocMetadata(
+            dataset=DatasetMetadata(description=""),
+            columns={**self.columns, **other.columns},
+        )
