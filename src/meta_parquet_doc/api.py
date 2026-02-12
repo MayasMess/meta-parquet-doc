@@ -1,5 +1,6 @@
 """Public API: write_dataset, read_dataset, validate_dataset, init_metadata."""
 
+import logging
 from pathlib import Path
 from typing import Any, Literal
 
@@ -23,6 +24,8 @@ from meta_parquet_doc._validation import (
     validate_mandatory_fields,
 )
 from meta_parquet_doc.exceptions import MetadataValidationError
+
+logger = logging.getLogger(__name__)
 
 
 def write_dataset(
@@ -144,23 +147,39 @@ def read_dataset(
     path = Path(path)
     resolved = resolve_metadata_path(path, metadata_path)
 
-    # Read and parse metadata
+    # Read parquet data
+    adapter = get_adapter_by_engine(engine)
+    df = adapter.read_parquet(path, **parquet_kwargs)
+    actual_columns = adapter.get_column_names(df)
+
+    if not resolved.exists():
+        # Create skeleton metadata from actual columns
+        columns = {
+            col: ColumnMetadata(description="", nullable=True, pii=False)
+            for col in actual_columns
+        }
+        ds_meta = DatasetMetadata(description="")
+        metadata = ParquetDocMetadata(dataset=ds_meta, columns=columns)
+        write_metadata_file(resolved, metadata)
+        logger.warning(
+            "No .meta.json found at %s – created default metadata file.", resolved
+        )
+        _log_empty_descriptions(metadata)
+        return df, metadata
+
+    # Read and parse existing metadata
     raw = read_metadata_file(resolved)
     struct_errors = validate_metadata_structure(raw)
     if struct_errors and mode == "strict":
         raise MetadataValidationError(struct_errors)
     metadata = ParquetDocMetadata.from_dict(raw)
 
-    # Read parquet data
-    adapter = get_adapter_by_engine(engine)
-    df = adapter.read_parquet(path, **parquet_kwargs)
-
     # Validate columns match
-    actual_columns = adapter.get_column_names(df)
     columns_dict = {k: v.to_dict() for k, v in metadata.columns.items()}
     validate_columns_coverage(actual_columns, columns_dict, mode=mode)
     validate_mandatory_fields(columns_dict, mode=mode)
 
+    _log_empty_descriptions(metadata)
     return df, metadata
 
 
@@ -271,3 +290,12 @@ def init_metadata(
     write_metadata_file(resolved, metadata)
 
     return resolved
+
+
+def _log_empty_descriptions(metadata: ParquetDocMetadata) -> None:
+    """Log warnings for empty description fields in dataset and columns."""
+    if metadata.dataset.description == "":
+        logger.warning("Dataset description is empty.")
+    for col_name, col_meta in metadata.columns.items():
+        if col_meta.description == "":
+            logger.warning("Column '%s' has an empty description.", col_name)

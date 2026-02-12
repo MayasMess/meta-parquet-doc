@@ -12,10 +12,7 @@ from meta_parquet_doc import (
     validate_dataset,
     write_dataset,
 )
-from meta_parquet_doc.exceptions import (
-    MetadataFileNotFoundError,
-    MetadataValidationError,
-)
+from meta_parquet_doc.exceptions import MetadataValidationError
 
 
 class TestWriteDataset:
@@ -114,11 +111,20 @@ class TestReadDataset:
         assert isinstance(table, pa.Table)
         assert table.num_rows == 3
 
-    def test_read_missing_metadata_raises(self, tmp_path, sample_pandas_df):
+    def test_read_missing_metadata_creates_default(self, tmp_path, sample_pandas_df):
         out = tmp_path / "data.parquet"
         sample_pandas_df.to_parquet(out)
-        with pytest.raises(MetadataFileNotFoundError):
-            read_dataset(out)
+        df, metadata = read_dataset(out)
+        # Should have created the .meta.json file
+        meta_file = tmp_path / "_metadata.json"
+        assert meta_file.exists()
+        # Skeleton has all columns with empty descriptions
+        assert set(metadata.columns.keys()) == {"user_id", "name", "email"}
+        assert metadata.dataset.description == ""
+        for col_meta in metadata.columns.values():
+            assert col_meta.description == ""
+            assert col_meta.nullable is True
+            assert col_meta.pii is False
 
 
 class TestValidateDataset:
